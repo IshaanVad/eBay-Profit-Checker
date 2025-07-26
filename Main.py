@@ -1,43 +1,55 @@
 import requests
 from bs4 import BeautifulSoup
 
-url = 'https://www.ebay.com/sch/i.html?_nkw=pokemon&_sacat=0&_from=R40&LH_Auction=1&rt=nc&LH_PrefLoc=1&Language=English&_dcat=183454'
+def get_ebay_item_total(url):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Referer': 'https://www.ebay.com/',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
 
-headers = {"User-Agent": "Mozilla/5.0"}
-response = requests.get(url, headers=headers)
-soup = BeautifulSoup(response.text, 'html.parser')
+    with requests.Session() as session:
+        response = session.get(url, headers=headers)
+        if response.status_code != 200:
+            print(f"Failed to fetch page, status code {response.status_code}")
+            return None
 
-combined_prices = {}
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-for item in soup.select('.s-item'):
-    title_elem = item.select_one('.s-item__title')
-    price_elem = item.select_one('.s-item__price')
-    shipping_elem = item.select_one('.s-item__shipping, .s-item__logisticsCost')  # shipping cost
+        title_tag = soup.find(id="itemTitle")
+        if not title_tag:
+            print("Could not find item title.")
+            return None
+        title = title_tag.get_text(strip=True).replace("Details about  \xa0", "")
 
-    if not title_elem or not price_elem:
-        continue  # Skip incomplete listings
+        bid_price_tag = soup.find('span', id='prcIsum_bidPrice') or soup.find('span', id='prcIsum')
+        if not bid_price_tag:
+            print("Could not find current bid or price.")
+            return None
 
-    title = title_elem.get_text(strip=True)
+        bid_price_text = bid_price_tag.get_text(strip=True)
+        bid_price = float(bid_price_text.replace('$', '').replace(',', ''))
 
-    try:
-        # Extract price, remove $ and commas
-        price_text = price_elem.get_text()
-        price = float(price_text.replace('$', '').replace(',', '').split()[0])
-    except:
-        continue  # Skip if price can't be parsed
-
-    try:
-        shipping_text = shipping_elem.get_text()
-        if 'Free' in shipping_text:
-            shipping = 0.0
+        shipping_tag = soup.find('span', id='fshippingCost')
+        if not shipping_tag:
+            shipping_price = 0.0
         else:
-            shipping = float(shipping_text.replace('$', '').replace('+', '').replace(',', '').split()[0])
-    except:
-        shipping = 0.0  # Assume free shipping if missing
+            shipping_text = shipping_tag.get_text(strip=True)
+            if 'Free' in shipping_text:
+                shipping_price = 0.0
+            else:
+                shipping_price = float(shipping_text.replace('$', '').replace(',', ''))
 
-    total = round(price + shipping, 2)
-    combined_prices[title] = total
+        total_price = bid_price + shipping_price
 
-# Print result
-for name, total in combined_prices.items():
-    print(f"{name} → ${total}")
+        return {title: total_price}
+
+if __name__ == "__main__":
+    url = input("Enter eBay item URL: ").strip()
+    result = get_ebay_item_total(url)
+    if result:
+        print("Resulting map:")
+        print(result)
