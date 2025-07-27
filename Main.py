@@ -1,55 +1,90 @@
 import requests
-from bs4 import BeautifulSoup
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext
 
-def get_ebay_item_total(url):
+# === STEP 1: Search Auction Listings ===
+def search_auctions(keyword, token, limit=20):
+    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Referer': 'https://www.ebay.com/',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    params = {
+        "q": keyword,
+        "filter": "buyingOptions:{AUCTION}",
+        "limit": limit
     }
 
-    with requests.Session() as session:
-        response = session.get(url, headers=headers)
-        if response.status_code != 200:
-            print(f"Failed to fetch page, status code {response.status_code}")
-            return None
+    resp = requests.get(url, headers=headers, params=params)
+    resp.raise_for_status()
+    return resp.json().get("itemSummaries", [])
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+# === STEP 2: Extract & Compute Prices ===
+def get_price(obj):
+    try:
+        return float(obj.get("value", 0.0))
+    except:
+        return 0.0
 
-        title_tag = soup.find(id="itemTitle")
-        if not title_tag:
-            print("Could not find item title.")
-            return None
-        title = title_tag.get_text(strip=True).replace("Details about  \xa0", "")
+def compute_total_cost(items):
+    result = {}
+    for item in items:
+        title = item.get("title", "Unknown Item")
+        bid = get_price(item.get("currentBidPrice", {}))
+        shipping = 0.0
+        shipping_opts = item.get("shippingOptions", [])
 
-        bid_price_tag = soup.find('span', id='prcIsum_bidPrice') or soup.find('span', id='prcIsum')
-        if not bid_price_tag:
-            print("Could not find current bid or price.")
-            return None
+        if shipping_opts:
+            shipping = min([
+                get_price(opt.get("shippingCost", {})) + get_price(opt.get("importCharge", {}))
+                for opt in shipping_opts
+            ])
 
-        bid_price_text = bid_price_tag.get_text(strip=True)
-        bid_price = float(bid_price_text.replace('$', '').replace(',', ''))
+        total = bid + shipping
+        result[title] = total
+    return result
 
-        shipping_tag = soup.find('span', id='fshippingCost')
-        if not shipping_tag:
-            shipping_price = 0.0
+# === STEP 3: GUI Logic ===
+def search_and_display():
+    keyword = entry.get().strip()
+    if not keyword:
+        messagebox.showwarning("Input Required", "Please enter a search term.")
+        return
+
+    # ==== PASTE YOUR OAUTH TOKEN HERE (IN QUOTES) ====
+    token = "PASTE HERE"
+
+    try:
+        items = search_auctions(keyword, token)
+        results = compute_total_cost(items)
+
+        output.delete(1.0, tk.END)
+        if not results:
+            output.insert(tk.END, "No auction results found.")
         else:
-            shipping_text = shipping_tag.get_text(strip=True)
-            if 'Free' in shipping_text:
-                shipping_price = 0.0
-            else:
-                shipping_price = float(shipping_text.replace('$', '').replace(',', ''))
+            for title, cost in results.items():
+                output.insert(tk.END, f"{title}\n → ${cost:.2f}\n\n")
+    except requests.exceptions.HTTPError as e:
+        messagebox.showerror("Search Error", f"HTTP Error {e.response.status_code}:\n{e.response.text}")
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
 
-        total_price = bid_price + shipping_price
+# === STEP 4: Build GUI ===
+root = tk.Tk()
+root.title("eBay Auction Total Cost Viewer")
+root.geometry("700x500")
 
-        return {title: total_price}
+frame = ttk.Frame(root, padding=10)
+frame.pack(fill=tk.BOTH, expand=True)
 
-if __name__ == "__main__":
-    url = input("Enter eBay item URL: ").strip()
-    result = get_ebay_item_total(url)
-    if result:
-        print("Resulting map:")
-        print(result)
+ttk.Label(frame, text="Enter eBay Search Term:").pack(anchor=tk.W)
+entry = ttk.Entry(frame, width=50)
+entry.pack(anchor=tk.W, pady=5)
+
+search_btn = ttk.Button(frame, text="Search Auctions", command=search_and_display)
+search_btn.pack(anchor=tk.W, pady=5)
+
+output = scrolledtext.ScrolledText(frame, wrap=tk.WORD, height=20)
+output.pack(fill=tk.BOTH, expand=True, pady=10)
+
+root.mainloop()
